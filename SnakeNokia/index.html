@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snake Nokia</title>
+<style>
+  :root {
+    --lcd: #9fb53a;
+    --lcd-off: #97ab36;
+    --pixel: #1d2608;
+    --body: #2e3a5c;
+    --body-dark: #1f2842;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: #15181f;
+    padding: 16px 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: "Courier New", monospace;
+    color: #cfd6e6;
+  }
+  .phone {
+    background: linear-gradient(160deg, var(--body), var(--body-dark));
+    border-radius: 48px 48px 64px 64px;
+    padding: 28px 26px 34px;
+    box-shadow: 0 20px 50px rgba(0,0,0,.6), inset 0 2px 6px rgba(255,255,255,.15);
+    width: min(520px, calc(100vw - 32px));
+  }
+  .brand {
+    text-align: center;
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: bold;
+    letter-spacing: 4px;
+    color: #e8ecf5;
+    margin-bottom: 14px;
+    font-size: 20px;
+  }
+  .bezel {
+    background: #c9ccd3;
+    border-radius: 18px;
+    padding: 14px;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,.4);
+  }
+  .screen {
+    background: var(--lcd);
+    border-radius: 6px;
+    padding: 6px 8px 8px;
+    box-shadow: inset 0 0 12px rgba(0,0,0,.35);
+  }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    color: var(--pixel);
+    font-weight: bold;
+    font-size: 16px;
+    padding: 0 2px 4px;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    image-rendering: pixelated;
+  }
+  .help {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #b8c1d6;
+  }
+  .dpad {
+    margin: 12px auto 0;
+    display: grid;
+    grid-template-columns: repeat(3, 66px);
+    grid-template-rows: repeat(3, 58px);
+    gap: 4px 8px;
+    justify-content: center;
+  }
+  .dpad .up { grid-area: 1 / 2; }
+  .dpad .left { grid-area: 2 / 1; }
+  .dpad .right { grid-area: 2 / 3; }
+  .dpad .down { grid-area: 3 / 2; }
+  .key {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    border: none;
+    border-radius: 16px;
+    background: linear-gradient(180deg, #b9e3b0, #7fb877);
+    color: #1d2a1a;
+    font: bold 24px Arial, Helvetica, sans-serif;
+    box-shadow: 0 3px 0 #4d7a48, 0 5px 8px rgba(0,0,0,.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  /* celular: moldura fina para o visor ocupar quase toda a largura */
+  @media (max-width: 600px) {
+    body { padding: 6px 0; }
+    .phone {
+      width: calc(100vw - 12px);
+      border-radius: 28px 28px 40px 40px;
+      padding: 10px 8px 14px;
+    }
+    .brand { font-size: 15px; margin-bottom: 8px; }
+    .bezel { padding: 5px; border-radius: 12px; }
+    .screen { padding: 4px 5px 5px; }
+    .hud { font-size: 14px; padding-bottom: 2px; }
+  }
+  .key:active { transform: translateY(3px); box-shadow: 0 0 0 #4d7a48, 0 2px 4px rgba(0,0,0,.4); }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="brand">NOKIA</div>
+  <div class="bezel">
+    <div class="screen">
+      <div class="hud">
+        <span id="score">0000</span>
+        <span id="best">REC 0000</span>
+      </div>
+      <canvas id="game"></canvas>
+    </div>
+  </div>
+  <div class="dpad">
+    <button class="key up" data-key="ArrowUp" aria-label="Subir">▲</button>
+    <button class="key left" data-key="ArrowLeft" aria-label="Esquerda">◀</button>
+    <button class="key right" data-key="ArrowRight" aria-label="Direita">▶</button>
+    <button class="key down" data-key="ArrowDown" aria-label="Descer">▼</button>
+  </div>
+  <div class="help">
+    Setas movem e iniciam · toque no visor para pausar
+  </div>
+</div>
+
+<script>
+(() => {
+  // tamanho da área de jogo, em células. Com a tela em pé (celular) usa menos
+  // colunas, para as células ficarem maiores, e calcula as linhas para encher a altura.
+  const PORTRAIT = window.innerHeight > window.innerWidth;
+  const COLS = PORTRAIT ? 16 : 24;
+  let ROWS = 14;
+  const CELL = 16;              // pixels por célula
+  const PAD = 8;                // espaço entre a borda desenhada e a área de jogo
+  const TICK_MS = 140;          // velocidade moderada: 1 passo a cada 140 ms
+
+  const LCD = getComputedStyle(document.documentElement);
+  const C_BG = LCD.getPropertyValue('--lcd').trim();
+  const C_OFF = LCD.getPropertyValue('--lcd-off').trim();
+  const C_PX = LCD.getPropertyValue('--pixel').trim();
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  canvas.width = COLS * CELL + PAD * 2;
+  canvas.height = ROWS * CELL + PAD * 2;
+  if (PORTRAIT) {
+    const scale = canvas.clientWidth / canvas.width;   // px de tela por px do canvas
+    // altura de tudo que não é o canvas (moldura, teclado, margens da página)
+    const others = document.querySelector('.phone').offsetHeight - canvas.clientHeight + 12;
+    const rows = Math.floor(((window.innerHeight - others) / scale - PAD * 2) / CELL);
+    ROWS = Math.max(12, Math.min(26, rows));
+    canvas.height = ROWS * CELL + PAD * 2;
+  }
+
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+
+  const DIRS = {
+    ArrowUp: { x: 0, y: -1 },
+    ArrowDown: { x: 0, y: 1 },
+    ArrowLeft: { x: -1, y: 0 },
+    ArrowRight: { x: 1, y: 0 },
+  };
+
+  let snake, dir, queue, food, score, state, acc, last, blink;
+  let best = 0;
+  try { best = parseInt(localStorage.getItem('snakeNokiaBest'), 10) || 0; } catch (e) {}
+
+  const pad4 = n => String(n).padStart(4, '0');
+
+  function reset() {
+    const y = Math.floor(ROWS / 2);
+    snake = [{ x: 6, y }, { x: 5, y }, { x: 4, y }, { x: 3, y }];
+    dir = DIRS.ArrowRight;
+    queue = [];
+    score = 0;
+    blink = 0;
+    placeFood();
+    updateHud();
+  }
+
+  function placeFood() {
+    const occupied = new Set(snake.map(s => s.x + ',' + s.y));
+    const free = [];
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (!occupied.has(x + ',' + y)) free.push({ x, y });
+    food = free.length ? free[Math.floor(Math.random() * free.length)] : null;
+  }
+
+  function updateHud() {
+    scoreEl.textContent = pad4(score);
+    bestEl.textContent = 'REC ' + pad4(best);
+  }
+
+  function step() {
+    // aplica a próxima direção da fila, ignorando inversões de 180°
+    while (queue.length) {
+      const d = queue.shift();
+      if (d.x !== -dir.x || d.y !== -dir.y) { dir = d; break; }
+    }
+
+    const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    const eating = food && head.x === food.x && head.y === food.y;
+
+    // bateu na borda
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) return gameOver();
+    // bateu no próprio corpo (a cauda sai do lugar se não estiver comendo)
+    const body = eating ? snake : snake.slice(0, -1);
+    if (body.some(s => s.x === head.x && s.y === head.y)) return gameOver();
+
+    snake.unshift(head);
+    if (eating) {
+      score += 7;
+      updateHud();
+      placeFood();
+      if (!food) return gameOver(true);
+    } else {
+      snake.pop();
+    }
+  }
+
+  function gameOver(won = false) {
+    state = won ? 'won' : 'over';
+    blink = 6;
+    if (score > best) {
+      best = score;
+      try { localStorage.setItem('snakeNokiaBest', best); } catch (e) {}
+      updateHud();
+    }
+  }
+
+  // ---------- desenho ----------
+  function px(x, y, color) {
+    ctx.fillStyle = color;
+    ctx.fillRect(PAD + x * CELL + 1, PAD + y * CELL + 1, CELL - 2, CELL - 2);
+  }
+
+  function drawFood(f) {
+    // pequeno losango feito de 4 "subpixels", como no Nokia
+    const s = CELL / 4;
+    const ox = PAD + f.x * CELL, oy = PAD + f.y * CELL;
+    ctx.fillStyle = C_PX;
+    [[1.5, 0.5], [0.5, 1.5], [2.5, 1.5], [1.5, 2.5]].forEach(([a, b]) =>
+      ctx.fillRect(ox + a * s, oy + b * s, s, s));
+  }
+
+  function drawSnake() {
+    snake.forEach(s => px(s.x, s.y, C_PX));
+    // olho na cabeça
+    const h = snake[0];
+    const cx = PAD + h.x * CELL + CELL / 2 + dir.x * 3 - dir.y * 3;
+    const cy = PAD + h.y * CELL + CELL / 2 + dir.y * 3 + dir.x * 3;
+    ctx.fillStyle = C_BG;
+    ctx.fillRect(cx - 2, cy - 2, 3, 3);
+  }
+
+  function drawText(lines) {
+    const w = Math.min(260, canvas.width - 24), h = 26 + lines.length * 24;
+    const x = (canvas.width - w) / 2, y = (canvas.height - h) / 2;
+    ctx.fillStyle = C_BG;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = C_PX;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x + 1.5, y + 1.5, w - 3, h - 3);
+    ctx.fillStyle = C_PX;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    lines.forEach((t, i) => {
+      ctx.font = i === 0 ? 'bold 22px "Courier New", monospace' : 'bold 14px "Courier New", monospace';
+      ctx.fillText(t, canvas.width / 2, y + 24 + i * 24);
+    });
+  }
+
+  function draw() {
+    ctx.fillStyle = C_BG;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // grade de pixels "apagados" do LCD
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++) px(x, y, C_OFF);
+
+    // borda do campo
+    ctx.strokeStyle = C_PX;
+    ctx.lineWidth = 3;
+    ctx.strokeRect(PAD - 4.5, PAD - 4.5, COLS * CELL + 9, ROWS * CELL + 9);
+
+    if (food) drawFood(food);
+    const hidden = (state === 'over' || state === 'won') && blink > 0 && blink % 2 === 1;
+    if (!hidden) drawSnake();
+
+    if (state === 'ready') drawText(['SNAKE', 'Toque numa seta']);
+    else if (state === 'paused') drawText(['PAUSA', 'Toque p/ continuar']);
+    else if ((state === 'over' || state === 'won') && blink === 0)
+      drawText([state === 'won' ? 'VOCÊ VENCEU!' : 'FIM DE JOGO', 'Pontos: ' + score, 'Seta p/ jogar de novo']);
+  }
+
+  // ---------- loop ----------
+  function loop(t) {
+    if (last === undefined) last = t;
+    acc += t - last;
+    last = t;
+    if (state === 'running') {
+      while (acc >= TICK_MS && state === 'running') { acc -= TICK_MS; step(); }
+    } else if (blink > 0) {
+      // pisca a cobra algumas vezes ao morrer, como no original
+      if (acc >= 180) { acc = 0; blink--; }
+    } else {
+      acc = 0;
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  function start() {
+    reset();
+    state = 'running';
+    acc = 0;
+  }
+
+  function press(key) {
+    const d = DIRS[key];
+    const action = key === ' ' || key === 'Enter';
+    const ended = (state === 'over' || state === 'won') && blink === 0;
+
+    // qualquer seta (ou Espaço) começa uma partida nova
+    if ((state === 'ready' || ended) && (d || action)) {
+      start();
+      if (d && (d.x !== -dir.x || d.y !== -dir.y)) dir = d;
+      return;
+    }
+    if (key === 'p' || key === 'P' || key === 'pause') {
+      if (state === 'running') state = 'paused';
+      else if (state === 'paused') { state = 'running'; acc = 0; }
+      return;
+    }
+    if (d && state === 'running' && queue.length < 3) queue.push(d);
+  }
+
+  document.addEventListener('keydown', e => {
+    if (DIRS[e.key] || e.key === ' ') e.preventDefault();
+    press(e.key);
+  });
+
+  canvas.addEventListener('pointerdown', e => { e.preventDefault(); press('pause'); });
+
+  document.querySelectorAll('.key').forEach(btn => {
+    btn.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      if (navigator.vibrate) navigator.vibrate(15);
+      press(btn.dataset.key);
+    });
+  });
+
+  reset();
+  state = 'ready';
+  acc = 0;
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
